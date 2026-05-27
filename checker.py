@@ -13,6 +13,7 @@ import time
 import zipfile
 import tarfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 import socket
@@ -507,6 +508,7 @@ def save_results(links: list[str], output_path: str) -> None:
         for link in links:
             f.write(f"{link}\n")
 
+@lru_cache(maxsize=2048)
 def detect_country(address: str) -> str:
     try:
         ip = socket.gethostbyname(address)
@@ -594,8 +596,8 @@ def main():
     print("\n[+] Загрузка подписок...")
     raw_links_internet = []
     raw_links_whitelist = []
-    # for url in INTERNET_SUBS_POOL:
-    #     raw_links_internet.extend(parse_subscription(url))
+    for url in INTERNET_SUBS_POOL:
+        raw_links_internet.extend(parse_subscription(url))
     for url in WHITELISTED_SUBS_POOL:
         raw_links_whitelist.extend(parse_subscription(url))
     

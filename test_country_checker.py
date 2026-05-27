@@ -19,4 +19,5 @@ def detect_country(address: str) -> str:
     except Exception:
         return "Unknown"
     
-print(detect_country("www.google.com"))
+if __name__ == "__main__":
+    print(detect_country("www.google.com"))

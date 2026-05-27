@@ -35,8 +35,19 @@ def _read_multiline_env_value(name: str) -> str:
 
 
 def _env_pool(name: str, legacy_name: str = "") -> list[str]:
-    value = _read_multiline_env_value(name) or os.getenv(name) or (os.getenv(legacy_name) if legacy_name else "")
+    value = os.getenv(name) or (os.getenv(legacy_name) if legacy_name else "") or _read_multiline_env_value(name)
     return [item.strip() for item in value.replace("\n", ",").split(",") if item.strip()]
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 # Константы для работы с Xray
@@ -44,11 +55,11 @@ INTERNET_SUBS_POOL = _env_pool("INTERNET_SUBS_POOL", "INTERNET_SUBSCRIPTION_URL"
 WHITELISTED_SUBS_POOL = _env_pool("WHITELISTED_SUBS_POOL", "WHITELISTED_SUBSCRIPTION_URL")
 
 # количество топ конфигов на выходе
-INTERNET_CFGS_COUNT = int(os.getenv("INTERNET_CFGS_COUNT", 3))
-WHITELISTED_CFGS_COUNT = int(os.getenv("WHITELISTED_CFGS_COUNT", 3))
+INTERNET_CFGS_COUNT = _env_int("INTERNET_CFGS_COUNT", 3)
+WHITELISTED_CFGS_COUNT = _env_int("WHITELISTED_CFGS_COUNT", 3)
 
 # Количество потоков для проверки ссылок и скачивания Xray
-CONCURRENT_THREADS_CHECK_DEFAULT = int(os.getenv("CONCURRENT_THREADS_CHECK_DEFAULT", 8))
+CONCURRENT_THREADS_CHECK_DEFAULT = _env_int("CONCURRENT_THREADS_CHECK_DEFAULT", 8)
 
-MAX_LINKS_TO_CHECK_INTERNET = int(os.getenv("MAX_LINKS_TO_CHECK_INTERNET", 1000))
-MAX_LINKS_TO_CHECK_WHITELIST = int(os.getenv("MAX_LINKS_TO_CHECK_WHITELIST", 50000))
+MAX_LINKS_TO_CHECK_INTERNET = _env_int("MAX_LINKS_TO_CHECK_INTERNET", 1000)
+MAX_LINKS_TO_CHECK_WHITELIST = _env_int("MAX_LINKS_TO_CHECK_WHITELIST", 50000)

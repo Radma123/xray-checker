@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 import unittest
@@ -28,6 +27,9 @@ class TestXrayIntegration(unittest.TestCase):
 
     def test_01_real_github_api_url(self):
         """Интеграционный тест: делаем реальный запрос к GitHub API и проверяем URL."""
+        if os.getenv("RUN_XRAY_INTEGRATION_TESTS") != "1":
+            self.skipTest("Set RUN_XRAY_INTEGRATION_TESTS=1 to run network integration tests")
+
         print("\n[RUN] Запрос к реальному API GitHub...")
         url = get_xray_download_url()
         
@@ -45,6 +47,9 @@ class TestXrayIntegration(unittest.TestCase):
 
     def test_02_real_download_and_extract(self):
         """Интеграционный тест: реально скачиваем, распаковываем ядро Xray и проверяем его свойства."""
+        if os.getenv("RUN_XRAY_INTEGRATION_TESTS") != "1":
+            self.skipTest("Set RUN_XRAY_INTEGRATION_TESTS=1 to run network integration tests")
+
         print("\n[RUN] Скачивание и распаковка реального ядра Xray...")
         xray_path = setup_xray_bin()
         
@@ -74,9 +79,6 @@ class TestXrayIntegration(unittest.TestCase):
         remark, outbound = result
         
         print(f"[INFO] Название ноды успешно извлечено: {remark}")
-        print(f"[INFO] JSON-конфиг от Xray: {json.dumps(outbound, indent=2)}")
-
-        # Проверяем корректность парсинга силами Xray
         self.assertEqual(remark, "MySuperNode")
         self.assertEqual(outbound.get("protocol"), "vless")
         self.assertIn("streamSettings", outbound)
