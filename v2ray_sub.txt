@@ -1,0 +1,3 @@
+#profile-title: Liexer vpn_2 (автогенерация для интернета и БС)
+#profile-update-interval: 1
+#announce: Скрипт автоматизирован для поиска конфигов Xray для интернета и Белых списков

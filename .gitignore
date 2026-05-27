@@ -14,7 +14,6 @@ xray_bin/
 # Локальные файлы результатов проверки (теперь они в Gist, в репе не нужны)
 valid_internet_links.txt
 valid_whitelist_links.txt
-v2ray_sub.txt
 
 # IDE / Системные файлы
 .idea/
