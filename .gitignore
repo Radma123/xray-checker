@@ -2,10 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
-.env
 .venv
 venv/
-ENV/
 
 # Специфичное для проекта (Ядро Xray и временные файлы)
 xray_bin/
