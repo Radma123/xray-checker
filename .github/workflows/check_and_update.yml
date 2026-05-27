@@ -28,7 +28,7 @@ jobs:
 
     - name: Run checker script
       run: |
-        python main.py
+        python checker.py
 
     - name: Commit and Push changes
       run: |
