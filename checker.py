@@ -652,7 +652,27 @@ def main():
         save_results([link for _, _, link in valid_links_whitelist], output_whitelist)
         print(f"\n[+] Рабочие ссылки из вайтлиста сохранены в: {output_whitelist}")
 
+    # Формируем единый файл подписки с заголовками
+    final_lines = [
+        "#profile-title: Liexer vpn_2 (автогенерация для интернета и БС)",
+        "#profile-update-interval: 1",
+        "#announce: Скрипт автоматизирован для поиска конфигов Xray для интернета и Белых списков",
+        ""  # Пустая строка перед контентом
+    ]
     
+    # Сначала добавляем вайтлист (БС), затем интернет-ссылки (или наоборот)
+    if valid_links_whitelist:
+        for _, _, link in valid_links_whitelist:
+            final_lines.append(link)
+            
+    if valid_links_internet:
+        for _, _, link in valid_links_internet:
+            final_lines.append(link)
+
+    output_sub = os.path.join(PROJECT_DIR, "v2ray_sub.txt")
+    with open(output_sub, "w", encoding="utf-8") as f:
+        f.write("\n".join(final_lines))
+    print(f"[+] Финальный файл подписки сформирован: {output_sub}")
 
 if __name__ == "__main__":
     main()

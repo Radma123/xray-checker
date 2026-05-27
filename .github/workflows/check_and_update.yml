@@ -1,0 +1,53 @@
+name: Hourly Xray Config Checker & Repo Updater
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: # Оставляем возможность ручного запуска
+
+jobs:
+  run-checker:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # fetch-depth: 0 нужно, чтобы у git была вся история для корректного пуша
+        fetch-depth: 0 
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12.3'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Run checker script
+      run: |
+        python main.py
+
+    - name: Commit and Push changes
+      run: |
+        # Проверяем, появился ли файл подписки
+        if [ ! -f "v2ray_sub.txt" ]; then
+          echo "Файл v2ray_sub.txt не найден!"
+          exit 1
+        fi
+
+        # Настраиваем системного юзера git (дефолтный бот GitHub)
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+
+        # Добавляем файл в индекс
+        git add v2ray_sub.txt
+
+        # Проверяем, изменился ли файл. Если изменений нет, git commit вернет ошибку, 
+        # поэтому используем '|| true', чтобы воркфлоу не падал, когда конфиги те же самые.
+        git commit -m "Auto-update subscription links [skip ci]" || echo "Нет изменений для коммита"
+        
+        # Пушим изменения обратно в ветку
+        git push origin HEAD:main
