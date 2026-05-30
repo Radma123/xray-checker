@@ -26,10 +26,10 @@ from config import INTERNET_SUBS_POOL, WHITELISTED_SUBS_POOL, CONCURRENT_THREADS
 # Константы
 TEST_CONNECT_TIMEOUT = 2
 TEST_READ_TIMEOUT = 4
-TEST_URL = "https://www.google.com/"
-TEST_READ_BYTES = 2048
+TEST_URL = "https://speed.cloudflare.com/__down?bytes=204800"
 SOCKS_PORT_MIN = 20000
 CONCURRENT_DEFAULT = CONCURRENT_THREADS_CHECK_DEFAULT
+MIN_XRAY_START_TIMEOUT = 1.0
 
 # Папка проекта для хранения ядра
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -377,8 +377,19 @@ def convert_link_via_xray(link: str, xray_path: str | None = None) -> tuple[str,
 
     return None
 
-def check_single_config(outbound: dict, port: int, xray_path: str) -> float:
-    """Запускает Xray, реально читает данные через SOCKS и меряет время до первых байтов."""
+def wait_for_port(port: int, timeout: float = 1.0) -> bool:
+    """Динамическое ожидание открытия локального SOCKS-порта Xray."""
+    start_time = time.perf_counter()
+    while time.perf_counter() - start_time < timeout:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                return True
+        except (ConnectionRefusedError, socket.timeout):
+            time.sleep(0.05)
+    return False
+
+def check_single_config(outbound: dict, port: int, xray_path: str) -> tuple[float, float]:
+    """Запускает Xray, реально скачивает файл через SOCKS и измеряет задержку и скорость скачивания."""
     config = {
         "log": {"loglevel": "error"},
         "inbounds": [{"listen": "127.0.0.1", "port": port, "protocol": "socks", "settings": {"udp": True}}],
@@ -397,9 +408,14 @@ def check_single_config(outbound: dict, port: int, xray_path: str) -> float:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags
         )
         
-        time.sleep(0.2) # Быстрый старт локального SOCKS-порта
+        if not wait_for_port(port, timeout=MIN_XRAY_START_TIMEOUT):
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait()
+            return float('inf'), 0.0
+            
         if proc.poll() is not None:
-            return float('inf')
+            return float('inf'), 0.0
         
         proxies = {
             "http": f"socks5h://127.0.0.1:{port}",
@@ -407,6 +423,10 @@ def check_single_config(outbound: dict, port: int, xray_path: str) -> float:
         }
         
         t0 = time.perf_counter()
+        latency = float('inf')
+        downloaded_bytes = 0
+        t_start_download = None
+        
         try:
             with requests.get(
                 TEST_URL,
@@ -415,23 +435,35 @@ def check_single_config(outbound: dict, port: int, xray_path: str) -> float:
                 headers={"User-Agent": "Mozilla/5.0 v2ray-checker"},
                 stream=True,
             ) as r:
-                if r.status_code >= 500:
-                    return float('inf')
-
-                for chunk in r.iter_content(chunk_size=TEST_READ_BYTES):
+                if r.status_code >= 400:
+                    return float('inf'), 0.0
+                
+                t_first_byte = time.perf_counter()
+                latency = (t_first_byte - t0) * 1000
+                
+                t_start_download = time.perf_counter()
+                for chunk in r.iter_content(chunk_size=4096):
                     if chunk:
-                        return (time.perf_counter() - t0) * 1000
+                        downloaded_bytes += len(chunk)
+                t_end_download = time.perf_counter()
         except Exception:
-            return float('inf')
+            return float('inf'), 0.0
         finally:
             if proc.poll() is None:
                 proc.terminate()
                 proc.wait()
+                
+        if t_start_download and downloaded_bytes > 0:
+            download_duration = t_end_download - t_start_download
+            if download_duration > 0:
+                speed_kbps = (downloaded_bytes / 1024) / download_duration
+                return latency, speed_kbps
+                
     finally:
         try: os.unlink(config_path)
         except OSError: pass
         
-    return float('inf')
+    return float('inf'), 0.0
 
 def parse_subscription(source: str | None) -> list[str]:
     """Загружает подписку по ссылке или разбирает сырую строку (текст/base64)."""
@@ -463,8 +495,8 @@ def parse_subscription(source: str | None) -> list[str]:
     pattern = re.compile(r"(?:vless|vmess|trojan|ss)://[^\s<>'\"]+")
     return [match.group(0).strip() for match in pattern.finditer(source)]
 
-def check_configs(links: list[tuple[str, dict, str]], xray_path: str) -> list[tuple[float, str, str]]:
-    """Параллельно проверяет список конфигов и возвращает отсортированный по задержке результат."""
+def check_configs(links: list[tuple[str, dict, str]], xray_path: str) -> list[tuple[float, float, str, str]]:
+    """Параллельно проверяет список конфигов и возвращает отсортированный по скорости (убывание) результат."""
     valid_configs = []
     links = [item for item in links if item is not None]
     if not links:
@@ -479,16 +511,18 @@ def check_configs(links: list[tuple[str, dict, str]], xray_path: str) -> list[tu
         for future in as_completed(futures):
             remark, link = futures[future]
             try:
-                latency = future.result()
-                if latency != float('inf'):
-                    print(f"  [OK] {remark:<30} | Задержка (TCP+HTTP): {int(latency)} мс")
-                    valid_configs.append((latency, remark, link))
+                latency, speed = future.result()
+                if latency != float('inf') and speed > 0:
+                    speed_str = f"{speed / 1024:.2f} MB/s" if speed >= 1024 else f"{speed:.0f} KB/s"
+                    print(f"  [OK] {remark:<30} | Скор: {speed_str:<10} | Зад: {int(latency)} мс")
+                    valid_configs.append((speed, latency, remark, link))
                 else:
                     print(f"  [FAIL] {remark:<30}")
             except Exception as e: 
                 print(f"  [ОШИБКА] {remark}: {e}")
     
-    valid_configs.sort(key=lambda x: x[0])
+    # Сортируем по скорости (speed) в порядке убывания (reverse=True)
+    valid_configs.sort(key=lambda x: x[0], reverse=True)
     return valid_configs
 
 def parse_proxy_links(raw_links: list[str]) -> list[tuple[str, dict, str]]:
@@ -567,14 +601,15 @@ def set_link_remark(link: str, remark: str) -> str:
     except Exception:
         return link
 
-def add_country_to_remarks(valid_links: list[tuple[float, str, str]], prefix: str) -> list[tuple[float, str, str]]:
+def add_country_to_remarks(valid_links: list[tuple[float, float, str, str]], prefix: str) -> list[tuple[float, float, str, str]]:
     renamed_links = []
-    for idx, (latency, _remark, link) in enumerate(valid_links, 1):
+    for idx, (speed, latency, _remark, link) in enumerate(valid_links, 1):
         address = get_link_address(link)
         country = detect_country(address)
         country_emoji = get_country_emoji(country)
-        new_remark = f"{country_emoji} {prefix}№{idx} {latency:.0f}ms"
-        renamed_links.append((latency, new_remark, set_link_remark(link, new_remark)))
+        speed_str = f"{speed / 1024:.1f}MB/s" if speed >= 1024 else f"{speed:.0f}KB/s"
+        new_remark = f"{country_emoji} {prefix}№{idx} {speed_str} {latency:.0f}ms"
+        renamed_links.append((speed, latency, new_remark, set_link_remark(link, new_remark)))
     return renamed_links
 
 def main():
@@ -618,9 +653,9 @@ def main():
         print(f"\n[+] Проверка {len(raw_links_whitelist)} ссылок из вайтлиста...")
         valid_links_whitelist = check_configs(parse_proxy_links(raw_links_whitelist), xray_path)[:WHITELISTED_CFGS_COUNT]
 
-    # Сортировка по задержке
-    valid_links_internet.sort(key=lambda x: x[0])
-    valid_links_whitelist.sort(key=lambda x: x[0])
+    # Сортировка по скорости скачивания (убывание)
+    valid_links_internet.sort(key=lambda x: x[0], reverse=True)
+    valid_links_whitelist.sort(key=lambda x: x[0], reverse=True)
 
     # Определение страны по IP/домену и смена имени в remark.
     print("\n[+] Определение страны по IP и домену для рабочих ссылок...")
@@ -635,23 +670,25 @@ def main():
 
     if valid_links_internet:
         print("\n🏆 Топ самых быстрых серверов:")
-        for rank, (latency, remark, link) in enumerate(valid_links_internet, 1):
-            print(f"  {rank}. [{int(latency)} мс] {remark}")
+        for rank, (speed, latency, remark, link) in enumerate(valid_links_internet, 1):
+            speed_str = f"{speed / 1024:.2f} MB/s" if speed >= 1024 else f"{speed:.0f} KB/s"
+            print(f"  {rank}. [{speed_str:<10} | {int(latency)} мс] {remark}")
 
     if valid_links_whitelist:
         print("\n🔒 Рабочие ссылки из вайтлиста:")
-        for rank, (latency, remark, link) in enumerate(valid_links_whitelist, 1):
-            print(f"  {rank}. [{int(latency)} мс] {remark}")
+        for rank, (speed, latency, remark, link) in enumerate(valid_links_whitelist, 1):
+            speed_str = f"{speed / 1024:.2f} MB/s" if speed >= 1024 else f"{speed:.0f} KB/s"
+            print(f"  {rank}. [{speed_str:<10} | {int(latency)} мс] {remark}")
 
 
     # Сохранение результатов в файлы
     if valid_links_internet:
         output_internet = os.path.join(PROJECT_DIR, "valid_internet_links.txt")
-        save_results([link for _, _, link in valid_links_internet], output_internet)
+        save_results([link for _, _, _, link in valid_links_internet], output_internet)
         print(f"\n[+] Рабочие ссылки из интернет-пула сохранены в: {output_internet}")
     if valid_links_whitelist:
         output_whitelist = os.path.join(PROJECT_DIR, "valid_whitelist_links.txt")
-        save_results([link for _, _, link in valid_links_whitelist], output_whitelist)
+        save_results([link for _, _, _, link in valid_links_whitelist], output_whitelist)
         print(f"\n[+] Рабочие ссылки из вайтлиста сохранены в: {output_whitelist}")
 
     # Формируем единый файл подписки с заголовками
@@ -664,11 +701,11 @@ def main():
     
     # Сначала добавляем вайтлист (БС), затем интернет-ссылки (или наоборот)
     if valid_links_whitelist:
-        for _, _, link in valid_links_whitelist:
+        for _, _, _, link in valid_links_whitelist:
             final_lines.append(link)
             
     if valid_links_internet:
-        for _, _, link in valid_links_internet:
+        for _, _, _, link in valid_links_internet:
             final_lines.append(link)
 
     output_sub = os.path.join(PROJECT_DIR, "v2ray_sub.txt")
